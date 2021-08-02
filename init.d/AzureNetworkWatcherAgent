@@ -1,0 +1,126 @@
+#!/bin/bash
+### BEGIN INIT INFO
+# Provides:          Azure Network Analytics Agent
+# Required-Start:    $network
+# Required-Stop:     $network
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Azure Network Analytics Agent
+# Description:       Azure Network Analytics Agent.
+### END INIT INFO
+
+name="AzureNetworkWatcherAgent"
+pid_file="/var/run/$name.pid"
+
+# command to run host process controller with service
+cmd=/var/lib/waagent/Microsoft.Azure.NetworkWatcher.NetworkWatcherAgentLinux-1.4.1884.1/NetworkWatcherAgent/NetworkWatcherAgent
+
+get_pid()
+{
+    cat "$pid_file"
+}
+
+is_running()
+{
+    [ -f "$pid_file" ] && ps `get_pid` > /dev/null 2>&1
+}
+
+kill_agent_processes()
+{
+    pkill -SIGKILL NetworkWatcher
+}
+
+start()
+{
+    kill_agent_processes
+
+    echo -n "Starting $name..."
+
+    if [ -z "$NETWORKWATCHER_COREULIMIT" ]; then
+        NETWORKWATCHER_COREULIMIT=0
+    fi
+    ulimit -c $NETWORKWATCHER_COREULIMIT
+
+    $cmd Monitor /service
+    echo -n "Started[$?]"
+
+    echo
+    echo "Core limit: $NETWORKWATCHER_COREULIMIT"
+}
+
+stop()
+{
+    if is_running; then
+        echo -n "Stopping $name..."
+        for i in {1..10}
+        do
+            kill `get_pid`
+            if ! is_running; then
+                break
+            fi
+
+            echo -n "."
+            sleep 1
+        done
+
+        if is_running; then
+            echo "Not stopped; may still be shutting down or shutdown may have failed"
+            exit 1
+        else
+            echo "Stopped"
+            if [ -f "$pid_file" ]; then
+                rm "$pid_file"
+            fi
+        fi
+    else
+        echo "Not running"
+    fi
+}
+
+setenv()
+{
+    # Red Hat
+    cat /proc/version | head -n 1 | grep "Red Hat"
+    if [ $? -eq 0 ]; then
+        echo "Setting up Red Hat environment for SSL handshakes"
+        export SSL_CERT_PATH=/etc/pki/tls/certs
+        export SSL_CERT_FILE=/etc/pki/tls/cert.pem
+        return
+    fi
+
+    # SUSE
+    cat /proc/version | head -n 1 | grep "SUSE"
+    if [ $? -eq 0 ]; then
+        echo "Setting up SUSE environment for SSL handshakes"
+        export SSL_CERT_PATH=/etc/ssl/certs/
+        export SSL_CERT_FILE=/etc/ssl/ca-bundle.pem
+        return
+    fi
+}
+
+case "$1" in
+    start)
+        setenv
+        start
+    ;;
+    stop)
+        stop
+    ;;
+    restart)
+        stop
+        start
+    ;;
+    status)
+    if is_running; then
+        echo "Running"
+    else
+        echo "Stopped"
+        exit 1
+    fi
+    ;;
+    *)
+    echo "Usage: $0 {start|stop|restart|status}"
+    exit 1
+    ;;
+esac
+exit 0
